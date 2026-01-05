@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GadgetFinder - Locate & Ring</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Paho MQTT Client Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <style>
+        /* Pulse Animation for Ringing */
+        @keyframes ring-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); transform: scale(1); }
+            70% { box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); transform: scale(1.1); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); transform: scale(1); }
+        }
+        
+        .ringing-active {
+            animation: ring-pulse 1.5s infinite;
+        }
+
+        /* Smooth transitions */
+        .device-card {
+            transition: all 0.2s ease;
+        }
+        
+        .pin-transition {
+            transition: top 0.5s cubic-bezier(0.34, 1.56, 0.64, 1), left 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        /* View Management */
+        .view-section {
+            display: none !important;
+            height: 100%;
+        }
+        .view-section.active {
+            display: flex !important;
+        }
+
+        /* Modal/Toast Animation */
+        .toast {
+            transform: translateY(150%);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .toast.show {
+            transform: translateY(0);
+        }
+
+        /* Generic Modal */
+        .modal {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .modal.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col font-sans text-gray-800 overflow-hidden">
+
+    <!-- === VIEW: AUTH (LOGIN / REGISTER) === -->
+    <div id="view-auth" class="view-section active w-full h-full bg-slate-900 absolute inset-0 z-50 items-center justify-center">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md space-y-6 relative overflow-hidden">
+            <div class="absolute -top-10 -right-10 w-32 h-32 bg-indigo-100 rounded-full opacity-50"></div>
+            
+            <div class="text-center relative z-10">
+                <div class="bg-indigo-600 w-16 h-16 rounded-xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+                    <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                </div>
+                <h1 class="text-2xl font-bold text-gray-900">GadgetFinder</h1>
+                <p class="text-gray-500 mt-2">Track and locate your devices</p>
+            </div>
+
+            <!-- Tabs -->
+            <div class="flex border-b border-gray-200">
+                <button onclick="toggleAuthMode('login')" id="tab-login" class="flex-1 py-2 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 focus:outline-none">Login</button>
+                <button onclick="toggleAuthMode('register')" id="tab-register" class="flex-1 py-2 text-sm font-medium text-gray-500 hover:text-indigo-600 focus:outline-none">Register</button>
+            </div>
+
+            <!-- Login Form -->
+            <form id="form-login" onsubmit="handleLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                    <input type="email" id="login-email" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input type="password" id="login-password" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                </div>
+                <button type="submit" id="login-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-lg shadow-md transition-colors flex justify-center items-center">
+                    Sign In
+                </button>
+            </form>
+
+            <!-- Register Form -->
+            <form id="form-register" onsubmit="handleRegister(event)" class="space-y-4 hidden">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                    <input type="text" id="reg-name" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+                    <input type="email" id="reg-email" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input type="password" id="reg-password" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                </div>
+                <button type="submit" id="reg-btn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg shadow-md transition-colors flex justify-center items-center">
+                    Create Account
+                </button>
+            </form>
+
+            <div class="text-center text-xs text-gray-400 mt-2">
+                Connects to local backend at port 3000
+            </div>
+        </div>
+    </div>
+
+    <!-- === MAIN APP (Navbar + Views) === -->
+    
+    <nav id="main-navbar" class="hidden bg-white shadow-sm z-40 border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center cursor-pointer" onclick="switchView('dashboard')">
+                    <svg class="h-8 w-8 text-indigo-600 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <span class="font-bold text-xl tracking-tight text-gray-900">GadgetFinder</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button onclick="switchView('dashboard')" class="text-gray-500 hover:text-indigo-600 font-medium transition-colors">Dashboard</button>
+                    <button onclick="switchView('profile')" class="text-gray-500 hover:text-indigo-600 font-medium transition-colors">Profile</button>
+                    <div class="h-6 w-px bg-gray-300 mx-2"></div>
+                    <button onclick="logout()" class="text-red-500 hover:text-red-700 font-medium text-sm">Logout</button>
+                    <img src="https://ui-avatars.com/api/?name=User&background=indigo&color=fff" id="user-avatar" class="w-8 h-8 rounded-full border border-gray-200 shadow-sm ml-2">
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- === VIEW: DASHBOARD === -->
+    <div id="view-dashboard" class="view-section flex-col lg:flex-row flex-1 overflow-hidden relative">
+        
+        <!-- Left Panel: Device List -->
+        <div class="w-full lg:w-1/3 bg-white border-r border-gray-200 overflow-y-auto z-10 flex flex-col h-full">
+            <div class="p-6">
+                <h2 class="text-lg font-semibold text-gray-900 mb-4 flex items-center justify-between">
+                    My Devices
+                    <span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full" id="device-count-badge">Loading...</span>
+                </h2>
+                <!-- MQTT Status Indicator -->
+                <div id="mqtt-status" class="mb-4 px-3 py-2 bg-yellow-50 text-yellow-700 rounded-lg text-xs flex items-center hidden">
+                    <span class="w-2 h-2 rounded-full bg-yellow-400 mr-2 animate-pulse"></span>
+                    Connecting to MQTT Broker...
+                </div>
+
+                <div id="device-list" class="space-y-4 pb-20">
+                    <!-- Device items injected here -->
+                </div>
+            </div>
+            
+            <div class="p-4 mt-auto border-t border-gray-100 bg-gray-50 sticky bottom-0">
+                <button onclick="openAddDeviceModal()" class="w-full border-2 border-dashed border-gray-300 text-gray-500 rounded-xl p-3 hover:border-indigo-400 hover:text-indigo-600 transition-colors flex items-center justify-center font-medium">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                    Add New Device
+                </button>
+            </div>
+        </div>
+
+        <!-- Right Panel: Map View -->
+        <div class="flex-1 relative bg-gray-50 overflow-hidden flex flex-col h-full">
+            
+            <!-- Map Header Overlay -->
+            <div class="absolute top-0 left-0 right-0 p-4 z-20 bg-gradient-to-b from-white/80 to-transparent pointer-events-none">
+                <div class="bg-white/90 backdrop-blur-sm rounded-lg shadow-sm p-4 inline-flex items-center justify-between border border-gray-200 pointer-events-auto min-w-[300px] w-full max-w-lg mx-auto">
+                    <div class="flex items-center">
+                        <div class="mr-3 p-2 bg-blue-50 rounded-full text-blue-600" id="header-icon-container">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        </div>
+                        <div id="current-location-text" class="flex flex-col">
+                            <span class="font-bold text-gray-900 text-sm">Select a device</span>
+                            <span class="text-xs text-gray-500">to view location details</span>
+                        </div>
+                    </div>
+                    <!-- Refresh Button -->
+                    <button onclick="refreshCurrentLocation()" class="ml-4 p-2 bg-gray-100 rounded-full hover:bg-gray-200 text-gray-600 transition-colors" title="Fetch latest from Server">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- GPS Map -->
+            <div id="google-map-view" class="absolute inset-0 z-10 bg-gray-100 flex items-center justify-center text-gray-400 text-sm">
+                <iframe id="gmap-frame" width="100%" height="100%" frameborder="0" style="border:0" allowfullscreen src=""></iframe>
+                <div id="no-location-msg" class="absolute inset-0 flex items-center justify-center bg-gray-100 hidden flex-col">
+                    <svg class="w-12 h-12 text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    <p>No location data available for this device.</p>
+                    <p class="text-xs text-gray-400 mt-1">Try refreshing if data exists on server.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW: PROFILE & SETTINGS === -->
+    <div id="view-profile" class="view-section flex-col flex-1 bg-gray-50 overflow-y-auto">
+        <div class="max-w-4xl mx-auto w-full py-10 px-6">
+            <h2 class="text-3xl font-bold text-gray-900 mb-8">User Profile</h2>
+            
+            <!-- User Profile Card -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8 flex items-center space-x-6">
+                <img src="https://ui-avatars.com/api/?name=User&background=indigo&color=fff&size=128" id="profile-avatar-lg" class="w-24 h-24 rounded-full border-4 border-indigo-50">
+                <div>
+                    <h3 class="text-xl font-bold text-gray-900" id="profile-name">User</h3>
+                    <p class="text-gray-500" id="profile-email">user@example.com</p>
+                    <div class="flex mt-3 space-x-3">
+                        <button class="text-sm border border-gray-300 px-3 py-1 rounded-md hover:bg-gray-50 text-gray-700">Edit Profile</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 bg-yellow-50 text-yellow-800 rounded-lg text-sm border border-yellow-200">
+                <p><strong>Note:</strong> Location tracking relies on GPS coordinates stored in the server database.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- === ADD DEVICE MODAL === -->
+    <div id="modal-add-device" class="modal fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 transform transition-all scale-100">
+            <h3 class="text-xl font-bold text-gray-900 mb-4">Add New Device</h3>
+            <form onsubmit="handleAddNewDevice(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Friendly Name</label>
+                    <input type="text" id="add-dev-name" placeholder="e.g. Office Keys" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Hardware ID</label>
+                    <input type="text" id="add-dev-id" placeholder="e.g. BUZZER-DEV01" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                    <p class="text-xs text-gray-500 mt-1">Unique ID found on the back of your tag (Default: BUZZER-DEV01).</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Device Type</label>
+                    <select id="add-dev-type" class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none bg-white">
+                        <option value="tag">Tag / Keys</option>
+                        <option value="phone">Phone</option>
+                        <option value="card">Wallet Card</option>
+                        <option value="headphone">Headphones</option>
+                    </select>
+                </div>
+                <div class="flex space-x-3 pt-2">
+                    <button type="button" onclick="closeAddDeviceModal()" class="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg hover:bg-gray-200 font-medium">Cancel</button>
+                    <button type="submit" class="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 font-medium">Add Device</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast-container" class="fixed bottom-0 left-0 right-0 p-4 flex justify-center pointer-events-none z-50 overflow-hidden">
+        <div id="toast" class="toast bg-gray-900 text-white px-6 py-3 rounded-lg shadow-xl flex items-center space-x-3">
+            <div id="toast-icon"></div>
+            <p id="toast-message" class="font-medium">Notification</p>
+        </div>
+    </div>
+
+    <script>
+        // --- CONSTANTS ---
+        const API_URL = "http://localhost:3000/api";
+        const MQTT_CONFIG = {
+            host: "80cf954715bf4d949f4ee68bf3d621b3.s1.eu.hivemq.cloud",
+            port: 8884, // WSS Port for HiveMQ Cloud
+            username: "axionx",
+            password: "Harshit1",
+            path: "/mqtt",
+            useSSL: true
+        };
+
+        const DEVICE_ICONS = {
+            tag: "M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11.535 20.9a1 1 0 01-1.32.083l-.083-.083a1 1 0 01.083-1.32l2.676-2.676a6.002 6.002 0 01-2.29-6.907c1.35-4.053 5.48-6.426 9.401-4.998z",
+            phone: "M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z",
+            card: "M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z",
+            headphone: "M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4c0-2.79 3-4 3-8a9 9 0 10-18 0c0 4 3 5.21 3 8v4M10 11a2 2 0 11-4 0 2 2 0 014 0z"
+        };
+
+        // --- DATA STATE ---
+        const appState = {
+            authToken: null,
+            currentUser: null,
+            mqttClient: null,
+            mqttConnected: false,
+            // Mock Initial Devices (will persist in memory only for this demo)
+            devices: [
+                {
+                    id: 2, 
+                    hardwareId: "BUZZER-DEV01", 
+                    name: "House Keys (ESP32)", type: "tag", battery: 88, status: "Connected",
+                    lastSeen: "2 mins ago", coordinates: "Waiting for GPS...", lat: 0, lng: 0,
+                    color: "text-yellow-600", bg: "bg-yellow-100",
+                    iconPath: DEVICE_ICONS.tag
+                },
+                {
+                    id: 1, 
+                    hardwareId: "iphone_uuid",
+                    name: "iPhone 13 Pro", type: "phone", battery: 64, status: "Online",
+                    lastSeen: "Just now", coordinates: "Waiting for GPS...", lat: 0, lng: 0,
+                    color: "text-blue-500", bg: "bg-blue-100",
+                    iconPath: DEVICE_ICONS.phone
+                }
+            ]
+        };
+
+        let activeDeviceId = null;
+        let ringingDeviceId = null;
+        let ringingTimeout = null;
+
+        // --- AUTH & NAVIGATION ---
+
+        function toggleAuthMode(mode) {
+            const loginForm = document.getElementById('form-login');
+            const regForm = document.getElementById('form-register');
+            const tabLogin = document.getElementById('tab-login');
+            const tabRegister = document.getElementById('tab-register');
+
+            if (mode === 'login') {
+                loginForm.classList.remove('hidden');
+                regForm.classList.add('hidden');
+                tabLogin.className = "flex-1 py-2 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 focus:outline-none";
+                tabRegister.className = "flex-1 py-2 text-sm font-medium text-gray-500 hover:text-indigo-600 focus:outline-none";
+            } else {
+                loginForm.classList.add('hidden');
+                regForm.classList.remove('hidden');
+                tabRegister.className = "flex-1 py-2 text-sm font-medium text-indigo-600 border-b-2 border-indigo-600 focus:outline-none";
+                tabLogin.className = "flex-1 py-2 text-sm font-medium text-gray-500 hover:text-indigo-600 focus:outline-none";
+            }
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+            const btn = document.getElementById('login-btn');
+
+            btn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Signing In...`;
+
+            try {
+                // Try real login
+                const res = await fetch(`${API_URL}/auth/login`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email, password })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    finishAuth(data.token, data.user);
+                } else {
+                    const errorData = await res.json();
+                    throw new Error(errorData.error || "Login Failed");
+                }
+            } catch (error) {
+                console.warn("API Login failed:", error);
+                
+                // Fallback Mock Login for demo/offline
+                if (email === "user@example.com") {
+                    showToast("Using Mock Login (Server Offline)", "info");
+                    finishAuth("mock-token", { name: "Demo User", email: email });
+                } else {
+                    showToast("Login Failed: " + error.message, "error");
+                    btn.innerHTML = "Sign In";
+                }
+            }
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const name = document.getElementById('reg-name').value;
+            const email = document.getElementById('reg-email').value;
+            const password = document.getElementById('reg-password').value;
+            const btn = document.getElementById('reg-btn');
+
+            btn.innerHTML = `<svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Creating...`;
+
+            try {
+                const res = await fetch(`${API_URL}/auth/register`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name, email, password })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    showToast("Account Created! Logging in...", "success");
+                    finishAuth(data.token, data.user);
+                } else {
+                    const errorData = await res.json();
+                    throw new Error(errorData.error || "Registration Failed");
+                }
+            } catch (error) {
+                showToast("Error: " + error.message, "error");
+                btn.innerHTML = "Create Account";
+            }
+        }
+
+        function finishAuth(token, user) {
+            appState.authToken = token;
+            appState.currentUser = user;
+
+            // Update UI
+            document.getElementById('user-avatar').src = `https://ui-avatars.com/api/?name=${user.name}&background=indigo&color=fff`;
+            document.getElementById('profile-avatar-lg').src = `https://ui-avatars.com/api/?name=${user.name}&background=indigo&color=fff&size=128`;
+            document.getElementById('profile-name').innerText = user.name;
+            document.getElementById('profile-email').innerText = user.email;
+
+            // Transition
+            document.getElementById('view-auth').classList.remove('active');
+            document.getElementById('main-navbar').classList.remove('hidden');
+            switchView('dashboard');
+
+            // Initialize MQTT
+            initMQTT();
+        }
+
+        function logout() {
+            appState.currentUser = null;
+            appState.authToken = null;
+            if(appState.mqttClient) {
+                try { appState.mqttClient.disconnect(); } catch(e){}
+            }
+            document.getElementById('view-auth').classList.add('active');
+            document.getElementById('main-navbar').classList.add('hidden');
+            switchView('none'); 
+            document.getElementById('login-btn').innerHTML = "Sign In";
+            document.getElementById('reg-btn').innerHTML = "Create Account";
+        }
+
+        function switchView(viewName) {
+            document.querySelectorAll('.view-section').forEach(el => {
+                if(el.id !== 'view-auth') el.classList.remove('active');
+            });
+
+            const target = document.getElementById(`view-${viewName}`);
+            if (target) target.classList.add('active');
+
+            if (viewName === 'dashboard') {
+                renderDeviceList();
+                if (activeDeviceId) {
+                    const dev = appState.devices.find(d => d.id === activeDeviceId);
+                    if(dev) fetchDeviceLocation(dev);
+                }
+            } 
+        }
+
+        // --- ADD / REMOVE DEVICE LOGIC ---
+
+        function openAddDeviceModal() {
+            const modal = document.getElementById('modal-add-device');
+            modal.classList.add('open');
+            document.getElementById('add-dev-name').value = '';
+            document.getElementById('add-dev-id').value = '';
+        }
+
+        function closeAddDeviceModal() {
+            const modal = document.getElementById('modal-add-device');
+            modal.classList.remove('open');
+        }
+
+        function handleAddNewDevice(e) {
+            e.preventDefault();
+            const name = document.getElementById('add-dev-name').value.trim();
+            const hwId = document.getElementById('add-dev-id').value.trim();
+            const type = document.getElementById('add-dev-type').value;
+
+            if (!name || !hwId) return;
+
+            let color = "text-gray-600";
+            let bg = "bg-gray-200";
+            if (type === 'tag') { color = "text-yellow-600"; bg = "bg-yellow-100"; }
+            else if (type === 'phone') { color = "text-blue-500"; bg = "bg-blue-100"; }
+            else if (type === 'card') { color = "text-amber-700"; bg = "bg-amber-100"; }
+
+            const newDevice = {
+                id: Date.now(), 
+                hardwareId: hwId,
+                name: name,
+                type: type,
+                battery: 100, 
+                status: "Online",
+                lastSeen: "Just now",
+                coordinates: "Waiting for GPS...",
+                lat: 0, lng: 0,
+                color: color,
+                bg: bg,
+                iconPath: DEVICE_ICONS[type] || DEVICE_ICONS.tag
+            };
+
+            appState.devices.push(newDevice);
+            
+            if (appState.mqttConnected && appState.mqttClient) {
+                appState.mqttClient.subscribe(`buzzer/${hwId}/status`);
+            }
+
+            fetchDeviceLocation(newDevice);
+            closeAddDeviceModal();
+            renderDeviceList();
+            showToast(`Device "${name}" added successfully!`, 'success');
+        }
+
+        function removeDevice(id, event) {
+            event.stopPropagation();
+            if (confirm("Are you sure you want to remove this device?")) {
+                if (ringingDeviceId === id) handleStopRing(id);
+                appState.devices = appState.devices.filter(d => d.id !== id);
+                if (activeDeviceId === id) resetMap();
+                renderDeviceList();
+                showToast("Device removed.", 'info');
+            }
+        }
+
+        // --- MQTT LOGIC ---
+
+        function initMQTT() {
+            const clientId = "web_client_" + Math.random().toString(16).substr(2, 8);
+            const statusEl = document.getElementById('mqtt-status');
+            
+            statusEl.classList.remove('hidden');
+            
+            appState.mqttClient = new Paho.MQTT.Client(
+                MQTT_CONFIG.host,
+                MQTT_CONFIG.port,
+                clientId
+            );
+
+            appState.mqttClient.onConnectionLost = (responseObject) => {
+                console.log("MQTT Connection Lost:", responseObject.errorMessage);
+                appState.mqttConnected = false;
+                statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500 mr-2"></span> MQTT Disconnected`;
+                statusEl.className = "mb-4 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-xs flex items-center";
+            };
+
+            const connectOptions = {
+                useSSL: MQTT_CONFIG.useSSL,
+                userName: MQTT_CONFIG.username,
+                password: MQTT_CONFIG.password,
+                onSuccess: () => {
+                    console.log("MQTT Connected");
+                    appState.mqttConnected = true;
+                    statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500 mr-2"></span> MQTT Connected`;
+                    statusEl.className = "mb-4 px-3 py-2 bg-green-50 text-green-700 rounded-lg text-xs flex items-center";
+                    
+                    appState.devices.forEach(device => {
+                         if(device.hardwareId) {
+                             appState.mqttClient.subscribe(`buzzer/${device.hardwareId}/status`);
+                         }
+                    });
+                },
+                onFailure: (err) => {
+                    statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-red-500 mr-2"></span> MQTT Failed`;
+                    statusEl.className = "mb-4 px-3 py-2 bg-red-50 text-red-700 rounded-lg text-xs flex items-center";
+                }
+            };
+
+            try {
+                appState.mqttClient.connect(connectOptions);
+            } catch (e) {
+                console.error("MQTT Error:", e);
+            }
+        }
+
+        function publishBuzzerCommand(deviceUID, command) {
+            if (!appState.mqttConnected || !appState.mqttClient) {
+                showToast("MQTT not connected.", "info");
+                return;
+            }
+            const topic = `buzzer/${deviceUID}/control`;
+            const message = new Paho.MQTT.Message(command);
+            message.destinationName = topic;
+            appState.mqttClient.send(message);
+        }
+
+        // --- API LOCATION LOGIC ---
+
+        async function fetchDeviceLocation(device) {
+            if (!device || !device.hardwareId) return;
+
+            try {
+                // The backend requires Authorization header
+                const headers = {};
+                if (appState.authToken) {
+                    headers['Authorization'] = `Bearer ${appState.authToken}`;
+                }
+
+                const res = await fetch(`${API_URL}/locations?device=${device.hardwareId}&limit=1`, {
+                    headers: headers
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.length > 0) {
+                        const loc = data[0];
+                        device.lat = parseFloat(loc.lat);
+                        device.lng = parseFloat(loc.lon);
+                        device.coordinates = `${device.lat.toFixed(4)}° N, ${device.lng.toFixed(4)}° W`;
+                        device.lastSeen = new Date(loc.ts).toLocaleTimeString();
+                        
+                        if (activeDeviceId === device.id) updateMap(device);
+                        showToast("Location updated from server", "success");
+                    } else {
+                        // Only show specific error if we manually requested it
+                        if(activeDeviceId === device.id) updateMap(device); // updateMap handles empty coords
+                    }
+                }
+            } catch (e) {
+                console.log("Location fetch failed:", e);
+            }
+        }
+
+        function refreshCurrentLocation() {
+            if (!activeDeviceId) {
+                showToast("Select a device first", "info");
+                return;
+            }
+            const device = appState.devices.find(d => d.id === activeDeviceId);
+            showToast("Fetching location from server...", "info");
+            fetchDeviceLocation(device);
+        }
+
+        // --- DASHBOARD UI LOGIC ---
+        
+        function renderDeviceList() {
+            const listContainer = document.getElementById('device-list');
+            listContainer.innerHTML = '';
+            document.getElementById('device-count-badge').innerText = `${appState.devices.length} Active`;
+
+            appState.devices.forEach(device => {
+                const isActive = activeDeviceId === device.id;
+                
+                const card = document.createElement('div');
+                card.className = `device-card relative p-4 rounded-xl border cursor-pointer group hover:shadow-md ${isActive ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-gray-200 bg-white hover:border-indigo-300'}`;
+                card.onclick = (e) => {
+                    if (!e.target.closest('button') && !e.target.closest('select')) {
+                        selectDevice(device.id);
+                    }
+                };
+
+                const batteryColor = device.battery < 20 ? 'text-red-500' : 'text-green-500';
+                
+                const isIOT = device.hardwareId && device.hardwareId.startsWith("BUZZER");
+                const hardwareBadge = isIOT ? `<span class="ml-2 text-[10px] bg-gray-800 text-white px-1.5 py-0.5 rounded">IOT</span>` : "";
+
+                const isRinging = ringingDeviceId === device.id;
+                const btnAction = isRinging ? `handleStopRing(${device.id}, event)` : `handleStartRing(${device.id}, event)`;
+                const btnText = isRinging ? `Stop` : `Find`;
+                const btnClasses = isRinging 
+                    ? `bg-red-600 text-white border-red-600 hover:bg-red-700 shadow-sm animate-pulse` 
+                    : (isActive ? `bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700` : `bg-white text-gray-700 border-gray-300 hover:border-gray-400 hover:bg-gray-50`);
+                const btnIcon = isRinging 
+                    ? `<svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"></path></svg>`
+                    : ``;
+
+                card.innerHTML = `
+                    <button onclick="removeDevice(${device.id}, event)" class="absolute top-2 right-2 text-gray-300 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-colors z-10" title="Remove Device">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
+
+                    <div class="flex items-start justify-between">
+                        <div class="flex items-center w-full">
+                            <div class="p-3 rounded-lg ${device.bg} ${device.color} mr-4 flex-shrink-0">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${device.iconPath}"></path></svg>
+                            </div>
+                            <div class="w-full pr-4">
+                                <h3 class="font-bold text-gray-900 flex items-center pr-6">${device.name} ${hardwareBadge}</h3>
+                                <div class="flex items-center justify-between mt-1">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-blue-600 bg-blue-50 border border-opacity-20 border-gray-300">
+                                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                        GPS Only
+                                    </span>
+                                    <p class="text-xs text-gray-500 flex items-center ml-2">
+                                        <span class="w-1.5 h-1.5 rounded-full ${device.status === 'Online' || device.status === 'Connected' ? 'bg-green-500' : 'bg-orange-400'} mr-1"></span>
+                                        ${device.status}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end flex-shrink-0">
+                             <div class="text-xs font-semibold ${batteryColor} flex items-center mb-3 mt-1">
+                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                                ${device.battery}%
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-gray-100 flex justify-between items-center">
+                         <div class="text-xs text-gray-400 font-medium truncate max-w-[140px]">
+                            <svg class="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path></svg>
+                            ${device.coordinates}
+                         </div>
+                         <button onclick="${btnAction}" class="ring-btn text-sm font-semibold px-4 py-1.5 rounded-full border transition-all flex items-center ${btnClasses}">
+                            ${btnIcon}${btnText}
+                         </button>
+                    </div>
+                `;
+                listContainer.appendChild(card);
+            });
+        }
+
+        function selectDevice(id) {
+            activeDeviceId = id;
+            const device = appState.devices.find(d => d.id === id);
+            fetchDeviceLocation(device);
+            renderDeviceList();
+            updateMap(device);
+        }
+
+        function updateMap(device) {
+            const locationText = document.getElementById('current-location-text');
+            const gmapFrame = document.getElementById('gmap-frame');
+            const noLocMsg = document.getElementById('no-location-msg');
+
+            if (device.lat && device.lng) {
+                // We have valid coordinates
+                gmapFrame.src = `https://maps.google.com/maps?q=${device.lat},${device.lng}&z=15&output=embed`;
+                gmapFrame.classList.remove('hidden');
+                noLocMsg.classList.add('hidden');
+                
+                locationText.innerHTML = `<span class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-0.5">Last Known Location</span><span class="font-mono text-gray-900 font-bold text-lg">${device.coordinates}</span>`;
+            } else {
+                // No coordinates
+                gmapFrame.classList.add('hidden');
+                noLocMsg.classList.remove('hidden');
+                locationText.innerHTML = `<span class="text-xs text-gray-500 font-bold uppercase tracking-wider mb-0.5">Location Unavailable</span><span class="font-mono text-gray-900 font-bold text-lg">--</span>`;
+            }
+        }
+
+        function handleStartRing(id, event) {
+            if(event) event.stopPropagation();
+            stopAllRinging();
+
+            const device = appState.devices.find(d => d.id === id);
+            if (!device) return;
+
+            ringingDeviceId = id;
+            
+            if (activeDeviceId !== id) {
+                selectDevice(id);
+            } else {
+                renderDeviceList();
+            }
+
+            if (device.hardwareId) {
+                publishBuzzerCommand(device.hardwareId, "ON");
+                showToast(`Sending MQTT ON to ${device.name}...`, 'success');
+            } else {
+                showToast(`Simulating sound on ${device.name}...`, 'success');
+            }
+
+            playSystemBeep();
+
+            ringingTimeout = setTimeout(() => {
+                handleStopRing(id);
+            }, 5000);
+        }
+
+        function handleStopRing(id, event) {
+            if(event) event.stopPropagation();
+            
+            const device = appState.devices.find(d => d.id === id);
+            
+            if (device && device.hardwareId) {
+                publishBuzzerCommand(device.hardwareId, "OFF");
+            }
+
+            stopAllRinging(); 
+            showToast(`${device ? device.name : 'Device'} sound stopped.`, 'info');
+        }
+
+        function stopAllRinging() {
+            if (ringingTimeout) clearTimeout(ringingTimeout);
+            ringingDeviceId = null;
+            renderDeviceList(); 
+        }
+
+        function resetMap() {
+            activeDeviceId = null;
+            document.getElementById('gmap-frame').classList.add('hidden');
+            document.getElementById('no-location-msg').classList.remove('hidden');
+            document.getElementById('current-location-text').innerHTML = `<span class="font-bold text-gray-900 text-sm">Select a device</span><span class="text-xs text-gray-500">to view location details</span>`;
+            renderDeviceList();
+        }
+
+        // --- UTILS ---
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const msgEl = document.getElementById('toast-message');
+            msgEl.innerText = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        function playSystemBeep() {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContext) return;
+                const ctx = new AudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5);
+                gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.5);
+            } catch (e) { console.log("Audio play failed"); }
+        }
+    </script>
+</body>
+</html>
