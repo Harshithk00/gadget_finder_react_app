@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import Paho from 'paho-mqtt';
 
 // --- CONSTANTS ---
-const API_URL = "http://140.238.225.96/api";
+const API_URL = "/api";
 const MQTT_CONFIG = {
   host: "80cf954715bf4d949f4ee68bf3d621b3.s1.eu.hivemq.cloud",
   port: 8884, // WSS Port for HiveMQ Cloud
