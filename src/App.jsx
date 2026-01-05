@@ -26,7 +26,7 @@ const INITIAL_DEVICES = Array.from({ length: 6 }, (_, i) => {
   return {
     id: i + 1,
     hardwareId: hwId,
-    name: `Device ${num}`,
+    name: `BZR-DEV0${num}`,
     type: "tag", // Default type
     battery: Math.floor(Math.random() * 100),
     status: "Connected",
@@ -84,6 +84,14 @@ function App() {
     if (user && !mqttClient) {
       initMQTT();
     }
+    
+    // Fetch locations for all devices on load
+    if (user && token) {
+       devices.forEach(device => {
+          fetchDeviceLocation(device);
+       });
+    }
+
     // Cleanup on unmount or user logout
     return () => {
       if (mqttClient && mqttClient.isConnected()) {
@@ -366,14 +374,17 @@ function App() {
             headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const res = await fetch(`${API_URL}/locations?device=${device.hardwareId}&limit=1`, {
+        const res = await fetch(`${API_URL}/locations?device=${device.hardwareId}&limit=300`, {
             headers: headers
         });
 
         if (res.ok) {
             const data = await res.json();
             if (data && data.length > 0) {
-                const loc = data[0];
+                // Find latest by timestamp
+                const sorted = data.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+                const loc = sorted[0];
+
                 const updatedDevice = {
                   ...device,
                   lat: parseFloat(loc.lat),
