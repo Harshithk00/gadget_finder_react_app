@@ -22,7 +22,7 @@ const DEVICE_ICONS = {
 // --- INITIAL DATA ---
 const INITIAL_DEVICES = Array.from({ length: 6 }, (_, i) => {
   const num = i + 1;
-  const hwId = `BUZZER-DEV0${num}`;
+  const hwId = `BZR-DEV0${num}`;
   return {
     id: i + 1,
     hardwareId: hwId,
