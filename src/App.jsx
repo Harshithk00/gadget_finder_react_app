@@ -87,6 +87,7 @@ function App() {
     
     // Fetch locations for all devices on load
     if (user && token) {
+       console.log("Fetching initial locations for all devices...");
        devices.forEach(device => {
           fetchDeviceLocation(device);
        });
@@ -98,7 +99,7 @@ function App() {
         try { mqttClient.disconnect(); } catch (e) { console.error(e); }
       }
     };
-  }, [user]);
+  }, [user, token]);
 
   // --- AUTH FUNCTIONS ---
 
@@ -374,12 +375,16 @@ function App() {
             headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const res = await fetch(`${API_URL}/locations?device=${device.hardwareId}&limit=300`, {
+        const url = `${API_URL}/locations?device=${device.hardwareId}&limit=300`;
+        console.log(`fetching loc: ${url}`);
+
+        const res = await fetch(url, {
             headers: headers
         });
 
         if (res.ok) {
             const data = await res.json();
+            console.log(`Data for ${device.hardwareId}:`, data.length);
             if (data && data.length > 0) {
                 // Find latest by timestamp
                 const sorted = data.sort((a, b) => new Date(b.ts) - new Date(a.ts));
@@ -397,10 +402,17 @@ function App() {
                 setDevices(prev => prev.map(d => d.id === device.id ? updatedDevice : d));
                 
                 showToast("Location updated from server", "success");
+            } else {
+              console.log(`No location data for ${device.hardwareId}`);
             }
+        } else {
+            console.error("Location fetch error:", res.status, res.statusText);
+            // Optionally show toast for errors if needed
+            // showToast(`Error fetching ${device.name}: ${res.status}`, "error"); 
         }
     } catch (e) {
-        console.log("Location fetch failed:", e);
+        console.error("Location fetch failed:", e);
+        // showToast("Location fetch failed", "error");
     }
   };
 
